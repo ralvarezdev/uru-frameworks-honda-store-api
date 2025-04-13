@@ -104,7 +104,6 @@ async function checkProductStock(productData: ProductData, quantity:number) {
       'This product is out of stock.'
     );
   }
-
   if (quantity && productData?.stock < quantity) {
     throw new HttpsError('unavailable',
       'Not enough stock available.'
@@ -114,7 +113,7 @@ async function checkProductStock(productData: ProductData, quantity:number) {
 
 // Validate if the field is a non-empty string
 function validateEmptyStringField(fieldValue:string, fieldName:string) {
-  if (fieldValue.trim() === '') {
+  if (!fieldValue || fieldValue?.trim() === '') {
     throw new HttpsError('invalid-argument',
       `${fieldName} must be a non-empty string.`
     );
@@ -123,7 +122,7 @@ function validateEmptyStringField(fieldValue:string, fieldName:string) {
 
 // Validate if the field is a positive number
 function validatePositiveNumberField(fieldValue:number, fieldName:string) {
-  if (fieldValue <= 0) {
+  if (!fieldValue || fieldValue <= 0) {
     throw new HttpsError('invalid-argument',
       `${fieldName} must be a positive number.`
     );
@@ -132,17 +131,18 @@ function validatePositiveNumberField(fieldValue:number, fieldName:string) {
 
 // Create user data
 type CreateUserData = {
-  uid: string,
   first_name: string,
   last_name: string,
 }
 
 // Function to create a user
-export const create_user = onCall(async ({data}:{data:CreateUserData}) => {
+export const create_user = onCall(async ({data, auth}:{data:CreateUserData, auth?:AuthData}) => {
+  // Check if the user is authenticated
+    const userId = checkAuth(auth);
+
   // Validate input data
-  const {uid, first_name, last_name} = data;
+  const {first_name, last_name} = data;
   const mappedFields: Record<string, any> = {
-    'UID': uid,
     'First name': first_name,
     'Last name': last_name,
   }
@@ -152,13 +152,12 @@ export const create_user = onCall(async ({data}:{data:CreateUserData}) => {
 
   // Create a new user object
   const newUser = {
-    uid: uid,
     first_name: first_name,
     last_name: last_name,
   };
 
   // Save the user to Firestore
-  await firestore.collection('users').doc(uid).set(newUser);
+  await firestore.collection('users').doc(userId).set(newUser);
 
   return {message: 'User created successfully.'};
 });
