@@ -138,7 +138,7 @@ type CreateUserData = {
 }
 
 // Function to create a user
-exports.createUser = onCall(async ({data}:{data:CreateUserData}) => {
+export const create_user = onCall(async ({data}:{data:CreateUserData}) => {
   // Validate input data
   const {uid, first_name, last_name} = data;
   const mappedFields: Record<string, any> = {
@@ -164,7 +164,7 @@ exports.createUser = onCall(async ({data}:{data:CreateUserData}) => {
 });
 
 // Function to get a user by ID
-exports.getUserById = onCall(async ({auth}) => {
+export const get_user_by_id = onCall(async ({auth}) => {
   // Check if the user is authenticated
   const userId = checkAuth(auth);
 
@@ -183,7 +183,7 @@ type AddProductToCartData = {
 }
 
 // Function to add a product to the cart
-exports.addProductToCart = onCall(async ({data, auth}:{data:AddProductToCartData, auth?:AuthData}) => {
+export const add_product_to_cart = onCall(async ({data, auth}:{data:AddProductToCartData, auth?:AuthData}) => {
   // Check if the user is authenticated
   const userId = checkAuth(auth);
 
@@ -249,7 +249,7 @@ type RemoveProductFromCartData = {
 }
 
 // Function to remove a product from the cart
-exports.removeProductFromCart = onCall(async ({data, auth}:{data:RemoveProductFromCartData, auth?:AuthData}) => {
+export const remove_product_from_cart = onCall(async ({data, auth}:{data:RemoveProductFromCartData, auth?:AuthData}) => {
   // Check if the user is authenticated
   const userId = checkAuth(auth);
 
@@ -290,7 +290,7 @@ type UpdateProductQuantityInCartData = {
 }
 
 // Function to update the quantity of a product in the cart
-exports.updateProductQuantityInCart = onCall(async ({data, auth}:{data:UpdateProductQuantityInCartData, auth?:AuthData}) => {
+export const update_product_quantity_in_cart = onCall(async ({data, auth}:{data:UpdateProductQuantityInCartData, auth?:AuthData}) => {
   // Check if the user is authenticated
   const userId = checkAuth(auth);
 
@@ -332,7 +332,7 @@ exports.updateProductQuantityInCart = onCall(async ({data, auth}:{data:UpdatePro
 });
 
 // Function to get the cart
-exports.getCart = onCall(async ({auth}) => {
+export const get_cart = onCall(async ({auth}) => {
   // Check if the user is authenticated
   const userId = checkAuth(auth);
 
@@ -352,7 +352,7 @@ exports.getCart = onCall(async ({auth}) => {
 });
 
 // Function to clear the cart
-exports.clearCart = onCall(async ({auth}) => {
+export const clear_cart = onCall(async ({auth}) => {
   // Check if the user is authenticated
   const userId = checkAuth(auth);
 
@@ -373,7 +373,7 @@ exports.clearCart = onCall(async ({auth}) => {
 });
 
 // Function to check out the cart
-exports.checkoutCart = onCall(async ({auth}) => {
+export const checkout_cart = onCall(async ({auth}) => {
   // Check if the user is authenticated
   const userId = checkAuth(auth);
 
@@ -409,7 +409,7 @@ type CreateProductData = {
 }
 
 // Function to create a new product
-exports.createProduct = onCall(async ({data, auth}:{data:CreateProductData, auth?:AuthData}) => {
+export const create_product = onCall(async ({data, auth}:{data:CreateProductData, auth?:AuthData}) => {
   // Check if the user is authenticated
   const userId = checkAuth(auth);
 
@@ -456,7 +456,7 @@ type GetProductsData = {
 }
 
 // Function to get products
-exports.getProducts = onCall(async ({data}:{data:GetProductsData}) => {
+export const get_products = onCall(async ({data}:{data:GetProductsData}) => {
   // Validate input data
   const {limit = 10, offset = 0} = data;
   const mappedFields: Record<string, any> = {
@@ -495,7 +495,7 @@ type GetProductByIdData = {
 }
 
 // Function to get a product by ID
-exports.getProductById = onCall(async ({data, auth}:{data:GetProductByIdData, auth?:AuthData}) => {
+export const get_product_by_id = onCall(async ({data, auth}:{data:GetProductByIdData, auth?:AuthData}) => {
   // Check if the user is authenticated
   const userId = checkAuth(auth);
 
@@ -528,7 +528,7 @@ type UpdateProductData = {
 }
 
 // Function to update a product
-exports.updateProduct = onCall(async ({data, auth}:{data:UpdateProductData, auth?:AuthData}) => {
+export const update_product = onCall(async ({data, auth}:{data:UpdateProductData, auth?:AuthData}) => {
   // Check if the user is authenticated
   const userId = checkAuth(auth);
 
@@ -573,7 +573,7 @@ type RemoveProductData = {
 }
 
 // Function to remove a product
-exports.removeProduct = onCall(async ({data, auth}:{data:RemoveProductData, auth?: AuthData}) => {
+export const remove_product = onCall(async ({data, auth}:{data:RemoveProductData, auth?: AuthData}) => {
   // Check if the user is authenticated
   const userId = checkAuth(auth);
 
