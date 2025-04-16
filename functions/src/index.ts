@@ -1,8 +1,10 @@
 import {cert, initializeApp, ServiceAccount} from 'firebase-admin/app';
 import {DocumentReference, getFirestore} from 'firebase-admin/firestore';
-import {HttpsError, onCall} from 'firebase-functions/v2/https';
 import serviceAccount from '../../uru-frameworks-honda-store-firebase-adminsdk.json';
 import {Logging} from '@google-cloud/logging';
+import {onRequest} from "firebase-functions/v2/https";
+import {Request, Response} from "express"
+import {DecodedIdToken, getAuth} from "firebase-admin/auth";
 
 // Set to true to enable logging
 const DEBUG = true;
@@ -27,16 +29,6 @@ function logInfo(message: string) {
 // Helper function to log warning
 function logWarning(message: string) {
     logMessage(message, 'WARNING');
-}
-
-// Auth data
-interface AuthData {
-    uid: string;
-    token: {
-        email?: string;
-        name?: string;
-        [key: string]: any;
-    };
 }
 
 // User data
@@ -77,31 +69,80 @@ const app = initializeApp({
     credential: cert(serviceAccount as ServiceAccount)
 });
 
+// Firebase Auth instance
+const auth = getAuth(app);
+
 // Firebase Firestore instance
 const firestore = getFirestore(app);
 
+// Create a custom HTTP error with a status code and a message
+class HTTPError extends Error {
+    statusCode: number;
+
+  constructor(message:string, statusCode:number) {
+    super(message);
+    this.name = this.constructor.name;
+    this.statusCode = statusCode;
+    Error.captureStackTrace(this, this.constructor);
+  }
+}
+
+// Request HTTP error handler
+function handleRequestError(fn: (req: Request, res: Response) => void | Promise<void>) {
+    return async (req: Request, res: Response) => {
+        try {
+            fn(req, res)
+        } catch (error) {
+            if (error instanceof HTTPError) {
+                res.status(error.statusCode).json({error: error.message});
+            } else {
+                logWarning(`Error: ${error}`);
+                res.status(500).json({error: 'Internal Server Error'});
+            }
+        }
+    };
+}
+
 // Check if the user is authenticated
-function checkAuth(auth?: AuthData) {
-    if (!auth || !auth?.uid) {
-        logWarning(`User not authenticated`);
-        throw new HttpsError('unauthenticated',
-            'User must be authenticated'
-        );
+async function checkAuth(req: Request) {
+    // Check if the user is authenticated
+    const authorizationHeader = req.headers.authorization;
+
+    // Validate the authorization header
+    if (!authorizationHeader) {
+        logWarning(`Authorization header not found`);
+        throw new HTTPError('Authorization header not found', 401);
     }
 
-    logInfo(`User authenticated with ID: ${auth.uid}`);
-    return auth.uid;
+    // Decode the token
+    const token = authorizationHeader.split(' ')[1];
+
+    // Validate the token
+    if (!token) {
+        logWarning(`Token not found`);
+        throw new HTTPError('Token not found', 401);
+    }
+
+    try {
+        // Verify the token
+        const decodedIdToken = await auth.verifyIdToken(token)
+        logInfo(`User authenticated with ID: ${decodedIdToken.uid}`);
+        return decodedIdToken;
+    } catch (error) {
+        logWarning(`Token verification failed: ${error}`);
+        throw new HTTPError('Token verification failed', 401);
+    }
 }
 
 // Get the current pending cart reference for the user
-async function getCurrentPendingCartRef(userId: string) {
+async function getCurrentPendingCartRef(decodedIdToken: DecodedIdToken) {
     // Log the action
-    logInfo(`Getting pending cart for user: ${userId}`);
+    logInfo(`Getting pending cart for user: ${decodedIdToken.uid}`);
 
     // Query the Firestore collection for the user's cart
     const cartRef = firestore.collection('carts').where('owner',
         '==',
-        userId
+        decodedIdToken.uid
     ).where('status', '==', 'pending');
     return await cartRef.get();
 }
@@ -118,7 +159,7 @@ async function getProductDataById(productId: string): Promise<[DocumentReference
     // Check if the product exists
     if (!productSnapshot.exists) {
         logWarning(`Product not found with ID: ${productId}`);
-        throw new HttpsError('not-found', 'Product not found');
+        throw new HTTPError('Product not found', 404);
     }
 
     return [productRef, productSnapshot.data() as ProductData];
@@ -128,9 +169,7 @@ async function getProductDataById(productId: string): Promise<[DocumentReference
 async function checkProductActive(productData: ProductData) {
     if (!productData?.active) {
         logWarning(`Product is inactive: ${productData.title}`);
-        throw new HttpsError('unavailable',
-            'This product is currently unavailable'
-        );
+        throw new HTTPError('Product is inactive', 400);
     }
 }
 
@@ -138,15 +177,11 @@ async function checkProductActive(productData: ProductData) {
 async function checkProductStock(productData: ProductData, quantity: number) {
     if (productData?.stock <= 0) {
         logWarning(`Product "${productData.title}" is out of stock.`);
-        throw new HttpsError('unavailable',
-            'This product is out of stock'
-        );
+        throw new HTTPError('Product is out of stock', 400);
     }
     if (quantity && productData?.stock < quantity) {
         logWarning(`Not enough stock for product "${productData.title}". Requested: ${quantity}, Available: ${productData.stock}`);
-        throw new HttpsError('unavailable',
-            'Not enough stock available'
-        );
+        throw new HTTPError('Not enough stock', 400);
     }
 }
 
@@ -154,9 +189,7 @@ async function checkProductStock(productData: ProductData, quantity: number) {
 function validateEmptyStringField(fieldValue: string, fieldName: string) {
     if (!fieldValue || fieldValue?.trim() === '') {
         logWarning(`Invalid argument: ${fieldName} must be a non-empty string`);
-        throw new HttpsError('invalid-argument',
-            `${fieldName} must be a non-empty string`
-        );
+        throw new HTTPError(`${fieldName} must be a non-empty string`, 400);
     }
 }
 
@@ -164,213 +197,183 @@ function validateEmptyStringField(fieldValue: string, fieldName: string) {
 function validatePositiveNumberField(fieldValue: number, fieldName: string) {
     if (!fieldValue || fieldValue <= 0) {
         logWarning(`Invalid argument: ${fieldName} must be a positive number`);
-        throw new HttpsError('invalid-argument',
-            `${fieldName} must be a positive number`
-        );
+        throw new HTTPError(`${fieldName} must be a positive number`, 400);
     }
 }
 
-// Create user data
-type CreateUserData = {
-    first_name: string,
-    last_name: string,
-}
+// Function to create a new user
+export const create_user = onRequest(
+    handleRequestError(async (req: Request, res: Response) => {
+        logInfo('Function create_user called');
+        
+        // Check if the user is authenticated
+        const decodedIdToken = await checkAuth(req);
+        
+        // Extract data from request body
+        const {first_name = null, last_name = null} = req.body; 
+        const mappedFields: Record<string, any> = {
+            'First name': first_name,
+            'Last name': last_name,
+        }
+        for (const mappedFieldKey in mappedFields) {
+            validateEmptyStringField(mappedFields[mappedFieldKey], mappedFieldKey);
+        }
 
-// Function to create a user
-export const create_user = onCall(async ({data, auth}: { data: CreateUserData, auth?: AuthData }) => {
-    logInfo('Function create_user called');
+        // Create a new user object
+        const newUser = {first_name, last_name};
+        await firestore.collection('users').doc(decodedIdToken.uid).set(newUser);
 
-    // Check if the user is authenticated
-    const userId = checkAuth(auth);
-
-    // Validate input data
-    const {first_name, last_name} = data;
-    const mappedFields: Record<string, any> = {
-        'First name': first_name,
-        'Last name': last_name,
-    }
-    for (const mappedFieldKey in mappedFields) {
-        validateEmptyStringField(mappedFields[mappedFieldKey], mappedFieldKey);
-    }
-
-    // Create a new user object
-    const newUser = {
-        first_name: first_name,
-        last_name: last_name,
-    };
-
-    // Save the user to Firestore
-    await firestore.collection('users').doc(userId).set(newUser);
-    logInfo(`User created successfully with ID: ${userId}`);
-
-    return {message: 'User created successfully'};
-});
+        res.status(200).send({message: 'User created successfully'});
+    })
+);
 
 // Function to get a user by ID
-export const get_user_by_id = onCall(async ({auth}) => {
-    logInfo('Function get_user_by_id called');
-
-    // Check if the user is authenticated
-    const userId = checkAuth(auth);
-
-    // Retrieve the user document
-    const userDoc = await firestore.collection('users').doc(userId).get();
-    if (!userDoc.exists) {
-        logWarning(`User not found with ID: ${userId}`);
-        throw new HttpsError('not-found', 'User not found');
-    }
-
-    // Return the user data
-    const userData = userDoc.data() as UserData;
-    logInfo(`Retrieved user data: ${JSON.stringify(userData)}`);
-
-    return {user: userData};
-});
-
-// Add product to cart data
-type AddProductToCartData = {
-    productId: string,
-    quantity: number,
-}
+export const get_user_by_id = onRequest(
+    handleRequestError(async (req: Request, res: Response) => {
+        logInfo('Function get_user_by_id called');
+    
+        // Check if the user is authenticated
+        const decodedIdToken = await checkAuth(req);
+    
+        // Retrieve the user document
+        const userDoc = await firestore.collection('users').doc(decodedIdToken.uid).get();
+        if (!userDoc.exists) {
+            logWarning(`User not found with ID: ${decodedIdToken.uid}`);
+            throw new HTTPError('User not found', 404);
+        }
+    
+        // Return the user data
+        const userData = userDoc.data() as UserData;
+        logInfo(`Retrieved user data: ${JSON.stringify(userData)}`);
+    
+        res.status(200).send({user: userData});
+    })
+);
 
 // Function to add a product to the cart
-export const add_product_to_cart = onCall(async ({data, auth}: { data: AddProductToCartData, auth?: AuthData }) => {
-    logInfo(`Function add_product_to_cart called`);
-
-    // Check if the user is authenticated
-    const userId = checkAuth(auth);
-
-    // Validate input data
-    const {productId, quantity} = data;
-    validateEmptyStringField(productId, 'Product ID');
-    validatePositiveNumberField(quantity, 'Quantity');
-    logInfo(`Adding product ${productId} with quantity ${quantity} to cart for user ${userId}`);
-
-    // Get the current pending cart
-    const cartSnapshot = await getCurrentPendingCartRef(userId);
-
-    // Get the product data
-    const [, productData] = await getProductDataById(productId);
-
-    // Check if the product is active
-    await checkProductActive(productData);
-
-    // Check if the product has stock
-    await checkProductStock(productData, quantity);
-
-    if (cartSnapshot.empty) {
-        // Create a new cart
-        const newCart = {
-            owner: userId,
-            status: 'pending',
-            products: {
-                [productId]: {
+export const add_product_to_cart = onRequest(
+    handleRequestError(async (req: Request, res: Response) => {
+        logInfo(`Function add_product_to_cart called`);
+    
+        // Check if the user is authenticated
+        const decodedIdToken = await checkAuth(req);
+    
+        // Validate input data
+        const {productId=null, quantity=null} = req.body
+        validateEmptyStringField(productId, 'Product ID');
+        validatePositiveNumberField(quantity, 'Quantity');
+        logInfo(`Adding product ${productId} with quantity ${quantity} to cart for user ${decodedIdToken.uid}`);
+    
+        // Get the current pending cart
+        const cartSnapshot = await getCurrentPendingCartRef(decodedIdToken);
+    
+        // Get the product data
+        const [, productData] = await getProductDataById(productId);
+    
+        // Check if the product is active
+        await checkProductActive(productData);
+    
+        // Check if the product has stock
+        await checkProductStock(productData, quantity);
+    
+        if (cartSnapshot.empty) {
+            // Create a new cart
+            const newCart = {
+                owner: decodedIdToken.uid,
+                status: 'pending',
+                products: {
+                    [productId]: {
+                        id: productId,
+                        price: productData.price,
+                        quantity: quantity,
+                    },
+                },
+            };
+            await firestore.collection('carts').add(newCart);
+            logInfo(`New cart created and product "${productData.title}" added`);
+        } else {
+            const cartDocument = cartSnapshot.docs[0];
+            const cartData = cartDocument.data() as CartData;
+            const existingProduct = cartData.products && cartData.products[productId];
+    
+            const updatedProducts = {...cartData.products};
+    
+            // Check if the product already exists in the cart
+            if (existingProduct) {
+                // Update the quantity of the existing product
+                updatedProducts[productId].quantity += quantity;
+                logInfo(`Incrementing quantity of product "${productData.title}" in cart to ${updatedProducts[productId].quantity}`);
+            } else {
+                updatedProducts[productId] = {
                     id: productId,
                     price: productData.price,
                     quantity: quantity,
-                },
-            },
-        };
-        await firestore.collection('carts').add(newCart);
-        logInfo(`New cart created and product "${productData.title}" added`);
-    } else {
-        const cartDocument = cartSnapshot.docs[0];
-        const cartData = cartDocument.data() as CartData;
-        const existingProduct = cartData.products && cartData.products[productId];
-
-        const updatedProducts = {...cartData.products};
-
-        // Check if the product already exists in the cart
-        if (existingProduct) {
-            // Update the quantity of the existing product
-            updatedProducts[productId].quantity += quantity;
-            logInfo(`Incrementing quantity of product "${productData.title}" in cart to ${updatedProducts[productId].quantity}`);
-        } else {
-            updatedProducts[productId] = {
-                id: productId,
-                price: productData.price,
-                quantity: quantity,
-            };
-            logInfo(`Adding product "${productData.title}" to existing cart`);
+                };
+                logInfo(`Adding product "${productData.title}" to existing cart`);
+            }
+    
+            await cartDocument.ref.update({products: updatedProducts});
+            logInfo(`Product "${productData.title}" added to cart successfully`);
         }
-
-        await cartDocument.ref.update({products: updatedProducts});
-        logInfo(`Product "${productData.title}" added to cart successfully`);
-    }
-
-    return {message: 'Product added to cart successfully'};
-});
-
-// Remove product from cart data
-type RemoveProductFromCartData = {
-    productId: string,
-}
+    
+        res.status(200).send({message: 'Product added to cart successfully'});
+}));
 
 // Function to remove a product from the cart
-export const remove_product_from_cart = onCall(async ({data, auth}: {
-    data: RemoveProductFromCartData,
-    auth?: AuthData
-}) => {
-    logInfo(`Function remove_product_from_cart called`);
-
-    // Check if the user is authenticated
-    const userId = checkAuth(auth);
-
-    // Validate input data
-    const {productId} = data;
-    validateEmptyStringField(productId, 'Product ID');
-
-    // Get the current pending cart
-    const cartSnapshot = await getCurrentPendingCartRef(userId);
-    if (cartSnapshot.empty) {
-        logWarning(`No pending cart found for user: ${userId}`);
-        throw new HttpsError('not-found', 'No pending cart found for this user');
-    }
-
-    // Get the cart document
-    const cartDocument = cartSnapshot.docs[0];
-    const cartData = cartDocument.data() as CartData;
-    if (!cartData?.products[productId]) {
-        logWarning(`Product ${productId} not found in the cart`);
-        throw new HttpsError('not-found', 'Product not found in the cart');
-    }
-
-    // Remove the product from the cart
-    const updatedProducts = {...cartData.products};
-    delete updatedProducts[productId];
-
-    await cartDocument.ref.update({products: updatedProducts});
-    logInfo(`Product ${productId} removed from cart successfully`);
-
-    return {message: 'Product removed from cart successfully'};
-});
-
-// Update product quantity in cart data
-type UpdateProductQuantityInCartData = {
-    productId: string,
-    quantity: number,
-}
+export const remove_product_from_cart = onRequest(
+    handleRequestError(async (req: Request, res: Response) => {
+        logInfo(`Function remove_product_from_cart called`);
+    
+        // Check if the user is authenticated
+        const decodedIdToken = await checkAuth(req);
+    
+        // Validate input data
+        const {productId=null} = req.body;
+        validateEmptyStringField(productId, 'Product ID');
+    
+        // Get the current pending cart
+        const cartSnapshot = await getCurrentPendingCartRef(decodedIdToken);
+        if (cartSnapshot.empty) {
+            logWarning(`No pending cart found for user: ${decodedIdToken.uid}`);
+            throw new HTTPError('No pending cart found for this user', 404);
+        }
+    
+        // Get the cart document
+        const cartDocument = cartSnapshot.docs[0];
+        const cartData = cartDocument.data() as CartData;
+        if (!cartData?.products[productId]) {
+            logWarning(`Product ${productId} not found in the cart`);
+            throw new HTTPError('Product not found in the cart', 404);
+        }
+    
+        // Remove the product from the cart
+        const updatedProducts = {...cartData.products};
+        delete updatedProducts[productId];
+    
+        await cartDocument.ref.update({products: updatedProducts});
+        logInfo(`Product ${productId} removed from cart successfully`);
+    
+        res.status(200).send({message: 'Product removed from cart successfully'});
+}));
 
 // Function to update the quantity of a product in the cart
-export const update_product_quantity_in_cart = onCall(async ({data, auth}: {
-    data: UpdateProductQuantityInCartData,
-    auth?: AuthData
-}) => {
+export const update_product_quantity_in_cart = onRequest(
+    handleRequestError(async (req: Request, res: Response) => {
     logInfo(`Function update_product_quantity_in_cart called`);
 
     // Check if the user is authenticated
-    const userId = checkAuth(auth);
+    const decodedIdToken = await checkAuth(req);
 
     // Validate input data
-    const {productId, quantity} = data;
+    const {productId=null, quantity=null} = req.body;
     validateEmptyStringField(productId, 'Product ID');
     validatePositiveNumberField(quantity, 'Quantity');
 
     // Get the current pending cart
-    const cartSnapshot = await getCurrentPendingCartRef(userId);
+    const cartSnapshot = await getCurrentPendingCartRef(decodedIdToken);
     if (cartSnapshot.empty) {
-        logWarning(`No pending cart found for user: ${userId}`);
-        throw new HttpsError('not-found', 'No pending cart found for this user');
+        logWarning(`No pending cart found for user: ${decodedIdToken.uid}`);
+        throw new HTTPError('No pending cart found for this user', 404);
     }
 
     // Get the cart document
@@ -378,7 +381,7 @@ export const update_product_quantity_in_cart = onCall(async ({data, auth}: {
     const cartData = cartDocument.data() as CartData;
     if (!cartData?.products[productId]) {
         logWarning(`Product ${productId} not found in the cart`)
-        throw new HttpsError('not-found', 'Product not found in the cart')
+        throw new HTTPError('Product not found in the cart', 404);
     }
 
     // Get the product data
@@ -396,23 +399,22 @@ export const update_product_quantity_in_cart = onCall(async ({data, auth}: {
     await cartDocument.ref.update({products: updatedProducts});
     logInfo(`Product ${productId} quantity updated to ${quantity} in cart`)
 
-    return {message: 'Product quantity updated successfully.'};
-});
+    res.status(200).send({message: 'Product quantity updated successfully in cart'});
+}));
 
 // Function to get the cart
-export const get_cart = onCall(async ({auth}) => {
+export const get_cart = onRequest(
+    handleRequestError(async (req: Request, res: Response) => {
     logInfo(`Function get_cart called`)
 
     // Check if the user is authenticated
-    const userId = checkAuth(auth);
+    const decodedIdToken = await checkAuth(req);
 
     // Get the current pending cart
-    const cartSnapshot = await getCurrentPendingCartRef(userId);
+    const cartSnapshot = await getCurrentPendingCartRef(decodedIdToken);
     if (cartSnapshot.empty) {
-        logWarning(`No pending cart found for user: ${userId}`)
-        throw new HttpsError('not-found',
-            'No pending cart found for this user.'
-        );
+        logWarning(`No pending cart found for user: ${decodedIdToken.uid}`)
+        throw new HTTPError('No pending cart found for this user', 404);
     }
 
     // Get the cart document
@@ -420,48 +422,46 @@ export const get_cart = onCall(async ({auth}) => {
     const cartData = cartDocument.data() as CartData;
     logInfo(`Retrieved cart data: ${JSON.stringify(cartData)}`)
 
-    return {cart: cartData};
-});
+    res.status(200).send({cart: cartData});
+}));
 
 // Function to clear the cart
-export const clear_cart = onCall(async ({auth}) => {
+export const clear_cart = onRequest(
+    handleRequestError(async (req: Request, res: Response) => {
     logInfo(`Function clear_cart called`)
 
     // Check if the user is authenticated
-    const userId = checkAuth(auth);
+    const decodedIdToken = await checkAuth(req);
 
     // Get the current pending cart
-    const cartSnapshot = await getCurrentPendingCartRef(userId);
+    const cartSnapshot = await getCurrentPendingCartRef(decodedIdToken);
     if (cartSnapshot.empty) {
-        logWarning(`No pending cart found for user: ${userId}`);
-        throw new HttpsError('not-found',
-            'No pending cart found for this user.'
-        );
+        logWarning(`No pending cart found for user: ${decodedIdToken.uid}`);
+        throw new HTTPError('No pending cart found for this user', 404);
     }
 
     // Get the cart document
     const cartDocument = cartSnapshot.docs[0];
 
     await cartDocument.ref.update({products: {}});
-    logInfo(`Cart cleared successfully for user: ${userId}`);
+    logInfo(`Cart cleared successfully for user: ${decodedIdToken.uid}`);
 
-    return {message: 'Cart cleared successfully.'};
-});
+    res.status(200).send({message: 'Cart cleared successfully'});
+}));
 
 // Function to check out the cart
-export const checkout_cart = onCall(async ({auth}) => {
+export const checkout_cart = onRequest(
+    handleRequestError(async (req: Request, res: Response) => {
     logInfo(`Function checkout_cart called`)
 
     // Check if the user is authenticated
-    const userId = checkAuth(auth)
+    const decodedIdToken = await checkAuth(req)
 
     // Get the current pending cart
-    const cartSnapshot = await getCurrentPendingCartRef(userId);
+    const cartSnapshot = await getCurrentPendingCartRef(decodedIdToken);
     if (cartSnapshot.empty) {
-        logWarning(`No pending cart found for user: ${userId}`);
-        throw new HttpsError('not-found',
-            'No pending cart found for this user.'
-        );
+        logWarning(`No pending cart found for user: ${decodedIdToken.uid}`);
+        throw new HTTPError('No pending cart found for this user', 404);
     }
 
     // Get the cart document
@@ -471,32 +471,21 @@ export const checkout_cart = onCall(async ({auth}) => {
 
     // Update the cart status to 'completed'
     await cartDocument.ref.update({status: 'completed'});
-    logInfo(`Checkout completed successfully for user: ${userId}`);
+    logInfo(`Checkout completed successfully for user: ${decodedIdToken.uid}`);
 
-    return {message: 'Checkout completed successfully.'};
-});
-
-// Create product data
-type CreateProductData = {
-    title: string,
-    description: string,
-    price: number,
-    stock: number,
-    active: boolean,
-    brand: string,
-    tags: string[],
-    image_url: string,
-}
+    res.status(200).send({message: 'Checkout completed successfully'});
+}));
 
 // Function to create a new product
-export const create_product = onCall(async ({data, auth}: { data: CreateProductData, auth?: AuthData }) => {
+export const create_product = onRequest(
+    handleRequestError(async (req: Request, res: Response) => {
     logInfo(`Function create_product called`);
 
     // Check if the user is authenticated
-    const userId = checkAuth(auth);
+    const decodedIdToken = await checkAuth(req);
 
     // Validate input data
-    const {title, description, price, stock, active, brand, tags, image_url} = data;
+    const {title=null, description=null, price=null, stock=null, active=null, brand=null, tags=null, image_url=null} = req.body;
     const mappedStringFields: Record<string, any> = {
         'Title': title,
         'Description': description,
@@ -523,7 +512,7 @@ export const create_product = onCall(async ({data, auth}: { data: CreateProductD
         active: active,
         brand: brand,
         tags: Array.isArray(tags) ? tags : [],
-        owner: userId,
+        owner: decodedIdToken.uid,
         image_url: image_url,
     };
 
@@ -531,21 +520,16 @@ export const create_product = onCall(async ({data, auth}: { data: CreateProductD
     const productRef = await firestore.collection('products').add(newProduct);
     logInfo(`Product created successfully with ID: ${productRef.id}`);
 
-    return {message: 'Product created successfully.', productId: productRef.id};
-});
-
-// Get products data
-type GetProductsData = {
-    limit: number,
-    offset: number,
-}
+    res.status(200).send({message: 'Product created successfully'});
+}));
 
 // Function to get products
-export const get_products = onCall(async ({data}: { data: GetProductsData }) => {
+export const get_products = onRequest(
+    handleRequestError(async (req: Request, res: Response) => {
     logInfo(`Function get_products called`);
 
     // Validate input data
-    const {limit = 10, offset = 0} = data;
+    const {limit = 10, offset = 0} = req.body;
     const mappedFields: Record<string, any> = {
         'Limit': limit,
         'Offset': offset,
@@ -574,62 +558,49 @@ export const get_products = onCall(async ({data}: { data: GetProductsData }) => 
     ).count().get();
     const totalCount = totalCountSnapshot.data().count;
 
-    return {products, totalCount}
-});
-
-// Get product by ID data
-type GetProductByIdData = {
-    productId: string,
-}
+    res.status(200).send({
+        products: products,
+        totalCount: totalCount,
+    });
+}));
 
 // Function to get a product by ID
-export const get_product_by_id = onCall(async ({data, auth}: { data: GetProductByIdData, auth?: AuthData }) => {
+export const get_product_by_id = onRequest(
+    handleRequestError(async (req: Request, res: Response) => {
     logInfo(`Function get_product_by_id called`);
 
     // Check if the user is authenticated
-    const userId = checkAuth(auth);
+    const decodedIdToken = await checkAuth(req);
 
     // Validate input data
-    const {productId} = data;
+    const {productId=null} = req.body;
     validateEmptyStringField(productId, 'Product ID');
 
     // Get the product data
-    const [productRef, productData] = await getProductDataById(productId);
+    const [,productData] = await getProductDataById(productId);
     logInfo(`Retrieved product data: ${JSON.stringify(productData)}`);
 
     // Check if the product is active if the user is not the owner
-    if (productData.owner !== userId) {
-        logWarning(`User ${userId} is not the owner of product ${productId}`);
+    if (productData.owner !== decodedIdToken.uid) {
+        logWarning(`User ${decodedIdToken.uid} is not the owner of product ${productId}`);
         await checkProductActive(productData);
     } else {
-        logInfo(`User ${userId} is the owner of product ${productId}`);
+        logInfo(`User ${decodedIdToken.uid} is the owner of product ${productId}`);
     }
 
-    return {id: productRef.id, ...productData};
-});
-
-// Update product data
-type UpdateProductData = {
-    productId: string,
-    title?: string,
-    description?: string,
-    price?: number,
-    stock?: number,
-    active?: boolean,
-    brand?: string,
-    tags?: string[],
-    image_url?: string,
-}
+    res.status(200).send({product: productData})
+}));
 
 // Function to update a product
-export const update_product = onCall(async ({data, auth}: { data: UpdateProductData, auth?: AuthData }) => {
+export const update_product = onRequest(
+    handleRequestError(async (req: Request, res: Response) => {
     logInfo(`Function update_product called`);
 
     // Check if the user is authenticated
-    const userId = checkAuth(auth);
+    const decodedIdToken = await checkAuth(req);
 
     // Validate input data
-    const {productId, title, description, price, stock, active, brand, tags, image_url} = data;
+    const {productId=null, title=null, description=null, price=null, stock=null, active=null, brand=null, tags=null, image_url=null} = req.body;
     validateEmptyStringField(productId, 'Product ID');
 
     // Build the updates object
@@ -652,46 +623,38 @@ export const update_product = onCall(async ({data, auth}: { data: UpdateProductD
 
     // Get the product data
     const [productRef, productData] = await getProductDataById(productId);
-    if (productData.owner !== userId) {
-        logWarning(`User ${userId} is not the owner of product ${productId}`);
-        throw new HttpsError('permission-denied',
-            'You are not the owner of this product.'
-        );
+    if (productData.owner !== decodedIdToken.uid) {
+        logWarning(`User ${decodedIdToken.uid} is not the owner of product ${productId}`);
+        throw new HTTPError('You are not the owner of this product', 403);
     }
 
     await productRef.update({...updates});
     logInfo(`Product ${productId} updated successfully`);
 
-    return {message: 'Product updated successfully.'};
-});
-
-// Remove product data
-type RemoveProductData = {
-    productId: string,
-}
+    res.status(200).send({message: 'Product updated successfully'})
+}));
 
 // Function to remove a product
-export const remove_product = onCall(async ({data, auth}: { data: RemoveProductData, auth?: AuthData }) => {
+export const remove_product = onRequest(
+    handleRequestError(async (req: Request, res: Response) => {
     logInfo(`Function remove_product called`);
 
     // Check if the user is authenticated
-    const userId = checkAuth(auth);
+    const decodedIdToken = await checkAuth(req);
 
-// Validate input data
-    const {productId} = data;
+    // Validate input data
+    const {productId=null} = req.body;
     validateEmptyStringField(productId, 'Product ID');
 
     // Get the product data
     const [productRef, productData] = await getProductDataById(productId);
-    if (productData.owner !== userId) {
-        logWarning(`User ${userId} is not the owner of product ${productId}`);
-        throw new HttpsError('permission-denied',
-            'You are not the owner of this product.'
-        );
+    if (productData.owner !== decodedIdToken.uid) {
+        logWarning(`User ${decodedIdToken.uid} is not the owner of product ${productId}`);
+        throw new HTTPError('You are not the owner of this product', 403);
     }
 
     await productRef.delete();
     logInfo(`Product ${productId} removed successfully`);
 
-    return {message: 'Product removed successfully.'};
-});
+    res.status(200).send({message: 'Product removed successfully'})
+}));
