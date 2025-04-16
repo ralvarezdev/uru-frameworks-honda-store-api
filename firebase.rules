@@ -18,31 +18,31 @@ service cloud.firestore {
       allow read: if isOwner() || rsc.data.active;
       allow write: if isOwner();
     }
-  }
 
-  match /carts/{cart} {
-		function isSignedIn() {
-    	return request.auth != null;
+    match /carts/{cart} {
+      function isSignedIn() {
+        return request.auth != null;
+      }
+
+      function getOwner(rsc) {
+        return rsc.data.owner;
+      }
+
+      function isOwner(rsc) {
+        return isSignedIn() && (getOwner() == [request.auth.uid]);
+      }
+
+      allow read: if isOwner();
+      allow write: if isOwner();
     }
 
-    function getOwner(rsc) {
-      return rsc.data.owner;
+    match /users/{user} {
+      function isSignedIn() {
+        return request.auth != null;
+      }
+
+      allow write: if isSignedIn();
+      allow read: if isSignedIn();
     }
-
-    function isOwner(rsc) {
-    	return isSignedIn() && (getOwner() == [request.auth.uid]);
-    }
-
-    allow read: if isOwner();
-    allow write: if isOwner();
-  }
-
-  match /users/{user} {
-	    function isSignedIn() {
-    	return request.auth != null;
-    }
-
-    allow write: if isSignedIn();
-    allow read: if isSignedIn();
   }
 }
