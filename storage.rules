@@ -1,0 +1,14 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /images/{imageName} {
+      function isSignedIn() {
+        return request.auth != null;
+      }
+
+      allow write: if isSignedIn();
+      allow read: if isSignedIn();
+    }
+  }
+}
