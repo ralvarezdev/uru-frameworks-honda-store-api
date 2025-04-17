@@ -631,15 +631,16 @@ export const create_product = onRequestWithCORS(
 
         // Create a new product object
         const newProduct = {
-            title: title,
-            description: description,
-            price: price,
-            stock: stock,
-            active: active,
-            brand: brand,
+            title,
+            description,
+            price,
+            stock,
+            active,
+            brand,
             tags: Array.isArray(tags) ? tags : [],
             owner: decodedIdToken.uid,
-            image_url: image_url,
+            image_url,
+            sku,
         };
 
         // Save the product to Firestore
