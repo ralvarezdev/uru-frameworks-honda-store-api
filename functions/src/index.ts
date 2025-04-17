@@ -250,9 +250,23 @@ function validatePositiveNumberField(fieldValue: any, fieldName: string) {
         logWarning(`Invalid argument: ${fieldName} must be a number`);
         throw new HTTPError(`${fieldName} must be a number`, 400);
     }
-    if (!fieldValue || fieldValue <= 0) {
+    if (fieldValue===0)
+        return
+    if (!fieldValue || fieldValue < 0||fieldValue===Infinity) {
         logWarning(`Invalid argument: ${fieldName} must be a positive number`);
         throw new HTTPError(`${fieldName} must be a positive number`, 400);
+    }
+}
+
+// Validate if the field is a positive non-zero number
+function validatePositiveNonZeroNumberField(fieldValue: any, fieldName: string) {
+    if (typeof fieldValue !== 'number') {
+        logWarning(`Invalid argument: ${fieldName} must be a number`);
+        throw new HTTPError(`${fieldName} must be a number`, 400);
+    }
+    if (!fieldValue || fieldValue <= 0||fieldValue===Infinity) {
+        logWarning(`Invalid argument: ${fieldName} must be a positive non-zero number`);
+        throw new HTTPError(`${fieldName} must be a positive non-zero number`, 400);
     }
 }
 
@@ -336,7 +350,7 @@ export const add_product_to_cart = onRequestWithCORS(
         // Validate input data
         const {productId = null, quantity = null} = req.body
         validateEmptyStringField(productId, 'Product ID');
-        validatePositiveNumberField(quantity, 'Quantity');
+        validatePositiveNonZeroNumberField(quantity, 'Quantity');
         logInfo(`Adding product ${productId} with quantity ${quantity} to cart for user ${decodedIdToken.uid}`);
 
         // Get the current pending cart
@@ -444,7 +458,7 @@ export const update_product_quantity_in_cart = onRequestWithCORS(
         // Validate input data
         const {productId = null, quantity = null} = req.body;
         validateEmptyStringField(productId, 'Product ID');
-        validatePositiveNumberField(quantity, 'Quantity');
+        validatePositiveNonZeroNumberField(quantity, 'Quantity');
 
         // Get the current pending cart
         const cartSnapshot = await getCurrentPendingCartRef(firestore,  decodedIdToken);
@@ -592,7 +606,7 @@ export const create_product = onRequestWithCORS(
             validateEmptyStringField(mappedStringFields[mappedFieldKey], mappedFieldKey);
         }
         for (const mappedFieldKey in mappedPositiveNumberFields) {
-            validatePositiveNumberField(mappedPositiveNumberFields[mappedFieldKey], mappedFieldKey);
+            validatePositiveNonZeroNumberField(mappedPositiveNumberFields[mappedFieldKey], mappedFieldKey);
         }
         validateArrayField(tags, 'Tags');
         for (const [i, tag] of tags) {
@@ -628,13 +642,8 @@ export const get_products = onRequestWithCORS(
 
         // Validate input data
         const {limit = 10, offset = 0} = req.body;
-        const mappedFields: Record<string, any> = {
-            'Limit': limit,
-            'Offset': offset,
-        }
-        for (const mappedFieldKey in mappedFields) {
-            validatePositiveNumberField(mappedFields[mappedFieldKey], mappedFieldKey);
-        }
+        validatePositiveNonZeroNumberField(limit, 'Limit');
+        validatePositiveNumberField(offset, 'Offset');
 
         // Get the products
         const productsRef = firestore.collection('products')
@@ -735,7 +744,7 @@ export const update_product = onRequestWithCORS(
         }
         for (const mappedFieldKey in mappedPositiveNumberFields) {
             if (mappedPositiveNumberFields[mappedFieldKey] !== null) {
-                validatePositiveNumberField(mappedPositiveNumberFields[mappedFieldKey], mappedFieldKey);
+                validatePositiveNonZeroNumberField(mappedPositiveNumberFields[mappedFieldKey], mappedFieldKey);
                 updates[mappedFieldKey.toLowerCase().replace(' ', '_')] = mappedPositiveNumberFields[mappedFieldKey];
             }
         }
@@ -801,13 +810,8 @@ export const get_my_products = onRequestWithCORS(
 
         // Validate input data
         const {limit = 10, offset = 0} = req.body;
-        const mappedFields: Record<string, any> = {
-            'Limit': limit,
-            'Offset': offset,
-        }
-        for (const mappedFieldKey in mappedFields) {
-            validatePositiveNumberField(mappedFields[mappedFieldKey], mappedFieldKey);
-        }
+        validatePositiveNonZeroNumberField(limit, 'Limit');
+        validatePositiveNumberField(offset, 'Offset');
 
         // Get the products for the authenticated user
         const productsRef = firestore.collection('products')
