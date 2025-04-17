@@ -1,6 +1,7 @@
 import {cert, initializeApp, ServiceAccount} from 'firebase-admin/app';
-import {DocumentReference, getFirestore} from 'firebase-admin/firestore';
+import {DocumentReference, Firestore, getFirestore} from 'firebase-admin/firestore';
 import serviceAccount from '../../uru-frameworks-honda-store-firebase-adminsdk.json';
+import config from '../../config.json'
 import {Logging} from '@google-cloud/logging';
 import {onRequest} from "firebase-functions/v2/https";
 import {Request, Response} from "express"
@@ -10,9 +11,7 @@ import cors from 'cors'
 // Set to true to enable logging
 const DEBUG = true;
 
-// Initialize Google Cloud Logging
-const logging = new Logging();
-const log = logging.log('cloud-functions-log');
+// --- CORS
 
 // Initialize CORS middleware
 const corsHandler = cors({
@@ -42,6 +41,12 @@ function onRequestWithCORS(fn: (req: Request, res: Response) => void | Promise<v
         });
     })
 }
+
+// --- LOGGING
+
+// Initialize Google Cloud Logging
+const logging = new Logging();
+const log = logging.log('cloud-functions-log');
 
 // Helper function to log messages
 function logMessage(message: string, severity: 'INFO' | 'ERROR' | 'WARNING' = 'INFO') {
@@ -96,14 +101,15 @@ type CartData = {
 
 // Initialize the Firebase Admin SDK
 const app = initializeApp({
-    credential: cert(serviceAccount as ServiceAccount)
+    credential: cert(serviceAccount as ServiceAccount),
 });
 
 // Firebase Auth instance
 const auth = getAuth(app);
 
+
 // Firebase Firestore instance
-const firestore = getFirestore(app);
+const firestore = getFirestore(config.database);
 
 // Create a custom HTTP error with a status code and a message
 class HTTPError extends Error {
@@ -176,7 +182,7 @@ async function checkAuth(req: Request) {
 }
 
 // Get the current pending cart reference for the user
-async function getCurrentPendingCartRef(decodedIdToken: DecodedIdToken) {
+async function getCurrentPendingCartRef(firestore: Firestore, decodedIdToken: DecodedIdToken) {
     // Log the action
     logInfo(`Getting pending cart for user: ${decodedIdToken.uid}`);
 
@@ -189,7 +195,7 @@ async function getCurrentPendingCartRef(decodedIdToken: DecodedIdToken) {
 }
 
 // Get a product data by ID
-async function getProductDataById(productId: string): Promise<[DocumentReference, ProductData]> {
+async function getProductDataById(firestore: Firestore, productId: string): Promise<[DocumentReference, ProductData]> {
     // Log the action
     logInfo(`Getting product data for ID: ${productId}`);
 
@@ -261,8 +267,8 @@ export const create_user = onRequestWithCORS(
         }
 
         // Create a new user object
-        const newUser = {first_name, last_name, uid: decodedIdToken.uid};
-        await firestore.collection('users').add(newUser);
+        const newUser = {first_name, last_name};
+        await firestore.collection('users').doc(decodedIdToken.uid).set(newUser);
 
         res.status(200).send({message: 'User created successfully'});
     })
@@ -306,10 +312,10 @@ export const add_product_to_cart = onRequestWithCORS(
         logInfo(`Adding product ${productId} with quantity ${quantity} to cart for user ${decodedIdToken.uid}`);
 
         // Get the current pending cart
-        const cartSnapshot = await getCurrentPendingCartRef(decodedIdToken);
+        const cartSnapshot = await getCurrentPendingCartRef(firestore, decodedIdToken);
 
         // Get the product data
-        const [, productData] = await getProductDataById(productId);
+        const [, productData] = await getProductDataById(firestore, productId);
 
         // Check if the product is active
         await checkProductActive(productData);
@@ -358,7 +364,8 @@ export const add_product_to_cart = onRequestWithCORS(
         }
 
         res.status(200).send({message: 'Product added to cart successfully'});
-    }));
+    })
+);
 
 // Function to remove a product from the cart
 export const remove_product_from_cart = onRequestWithCORS(
@@ -373,7 +380,7 @@ export const remove_product_from_cart = onRequestWithCORS(
         validateEmptyStringField(productId, 'Product ID');
 
         // Get the current pending cart
-        const cartSnapshot = await getCurrentPendingCartRef(decodedIdToken);
+        const cartSnapshot = await getCurrentPendingCartRef(firestore,  decodedIdToken);
         if (cartSnapshot.empty) {
             logWarning(`No pending cart found for user: ${decodedIdToken.uid}`);
             throw new HTTPError('No pending cart found for this user', 404);
@@ -395,7 +402,8 @@ export const remove_product_from_cart = onRequestWithCORS(
         logInfo(`Product ${productId} removed from cart successfully`);
 
         res.status(200).send({message: 'Product removed from cart successfully'});
-    }));
+    })
+);
 
 // Function to update the quantity of a product in the cart
 export const update_product_quantity_in_cart = onRequestWithCORS(
@@ -411,7 +419,7 @@ export const update_product_quantity_in_cart = onRequestWithCORS(
         validatePositiveNumberField(quantity, 'Quantity');
 
         // Get the current pending cart
-        const cartSnapshot = await getCurrentPendingCartRef(decodedIdToken);
+        const cartSnapshot = await getCurrentPendingCartRef(firestore,  decodedIdToken);
         if (cartSnapshot.empty) {
             logWarning(`No pending cart found for user: ${decodedIdToken.uid}`);
             throw new HTTPError('No pending cart found for this user', 404);
@@ -426,7 +434,7 @@ export const update_product_quantity_in_cart = onRequestWithCORS(
         }
 
         // Get the product data
-        const [, productData] = await getProductDataById(productId);
+        const [, productData] = await getProductDataById(firestore, productId);
 
         // Check if the product is active
         await checkProductActive(productData);
@@ -441,7 +449,8 @@ export const update_product_quantity_in_cart = onRequestWithCORS(
         logInfo(`Product ${productId} quantity updated to ${quantity} in cart`)
 
         res.status(200).send({message: 'Product quantity updated successfully in cart'});
-    }));
+    })
+);
 
 // Function to get the cart
 export const get_cart = onRequestWithCORS(
@@ -452,7 +461,7 @@ export const get_cart = onRequestWithCORS(
         const decodedIdToken = await checkAuth(req);
 
         // Get the current pending cart
-        const cartSnapshot = await getCurrentPendingCartRef(decodedIdToken);
+        const cartSnapshot = await getCurrentPendingCartRef(firestore, decodedIdToken);
         if (cartSnapshot.empty) {
             logWarning(`No pending cart found for user: ${decodedIdToken.uid}`)
             throw new HTTPError('No pending cart found for this user', 404);
@@ -464,7 +473,8 @@ export const get_cart = onRequestWithCORS(
         logInfo(`Retrieved cart data: ${JSON.stringify(cartData)}`)
 
         res.status(200).send({cart: cartData});
-    }));
+    })
+);
 
 // Function to clear the cart
 export const clear_cart = onRequestWithCORS(
@@ -475,7 +485,7 @@ export const clear_cart = onRequestWithCORS(
         const decodedIdToken = await checkAuth(req);
 
         // Get the current pending cart
-        const cartSnapshot = await getCurrentPendingCartRef(decodedIdToken);
+        const cartSnapshot = await getCurrentPendingCartRef(firestore, decodedIdToken);
         if (cartSnapshot.empty) {
             logWarning(`No pending cart found for user: ${decodedIdToken.uid}`);
             throw new HTTPError('No pending cart found for this user', 404);
@@ -488,7 +498,8 @@ export const clear_cart = onRequestWithCORS(
         logInfo(`Cart cleared successfully for user: ${decodedIdToken.uid}`);
 
         res.status(200).send({message: 'Cart cleared successfully'});
-    }));
+    })
+);
 
 // Function to check out the cart
 export const checkout_cart = onRequestWithCORS(
@@ -499,7 +510,7 @@ export const checkout_cart = onRequestWithCORS(
         const decodedIdToken = await checkAuth(req)
 
         // Get the current pending cart
-        const cartSnapshot = await getCurrentPendingCartRef(decodedIdToken);
+        const cartSnapshot = await getCurrentPendingCartRef(firestore, decodedIdToken);
         if (cartSnapshot.empty) {
             logWarning(`No pending cart found for user: ${decodedIdToken.uid}`);
             throw new HTTPError('No pending cart found for this user', 404);
@@ -515,7 +526,8 @@ export const checkout_cart = onRequestWithCORS(
         logInfo(`Checkout completed successfully for user: ${decodedIdToken.uid}`);
 
         res.status(200).send({message: 'Checkout completed successfully'});
-    }));
+    })
+);
 
 // Function to create a new product
 export const create_product = onRequestWithCORS(
@@ -571,7 +583,8 @@ export const create_product = onRequestWithCORS(
         logInfo(`Product created successfully with ID: ${productRef.id}`);
 
         res.status(200).send({message: 'Product created successfully'});
-    }));
+    })
+);
 
 // Function to get products
 export const get_products = onRequestWithCORS(
@@ -612,7 +625,8 @@ export const get_products = onRequestWithCORS(
             products: products,
             totalCount: totalCount,
         });
-    }));
+    })
+);
 
 // Function to get a product by ID
 export const get_product_by_id = onRequestWithCORS(
@@ -627,7 +641,7 @@ export const get_product_by_id = onRequestWithCORS(
         validateEmptyStringField(productId, 'Product ID');
 
         // Get the product data
-        const [, productData] = await getProductDataById(productId);
+        const [, productData] = await getProductDataById(firestore, productId);
         logInfo(`Retrieved product data: ${JSON.stringify(productData)}`);
 
         // Check if the product is active if the user is not the owner
@@ -639,7 +653,8 @@ export const get_product_by_id = onRequestWithCORS(
         }
 
         res.status(200).send({product: productData})
-    }));
+    })
+);
 
 // Function to update a product
 export const update_product = onRequestWithCORS(
@@ -682,7 +697,7 @@ export const update_product = onRequestWithCORS(
         }
 
         // Get the product data
-        const [productRef, productData] = await getProductDataById(productId);
+        const [productRef, productData] = await getProductDataById(firestore, productId);
         if (productData.owner !== decodedIdToken.uid) {
             logWarning(`User ${decodedIdToken.uid} is not the owner of product ${productId}`);
             throw new HTTPError('You are not the owner of this product', 403);
@@ -692,7 +707,8 @@ export const update_product = onRequestWithCORS(
         logInfo(`Product ${productId} updated successfully`);
 
         res.status(200).send({message: 'Product updated successfully'})
-    }));
+    })
+);
 
 // Function to remove a product
 export const remove_product = onRequestWithCORS(
@@ -707,7 +723,7 @@ export const remove_product = onRequestWithCORS(
         validateEmptyStringField(productId, 'Product ID');
 
         // Get the product data
-        const [productRef, productData] = await getProductDataById(productId);
+        const [productRef, productData] = await getProductDataById(firestore, productId);
         if (productData.owner !== decodedIdToken.uid) {
             logWarning(`User ${decodedIdToken.uid} is not the owner of product ${productId}`);
             throw new HTTPError('You are not the owner of this product', 403);
@@ -717,4 +733,5 @@ export const remove_product = onRequestWithCORS(
         logInfo(`Product ${productId} removed successfully`);
 
         res.status(200).send({message: 'Product removed successfully'})
-    }));
+    })
+);

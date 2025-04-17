@@ -70,5 +70,5 @@ node_modules/
 
 # Firebase config files
 /uru-frameworks-honda-store-firebase-adminsdk.json
-
+/config.json
 
