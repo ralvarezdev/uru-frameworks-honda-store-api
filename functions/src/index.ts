@@ -232,27 +232,37 @@ async function checkProductStock(productData: ProductData, quantity: number) {
     }
 }
 
-// Validate if the field is a non-empty string
-function validateEmptyStringField(fieldValue: any, fieldName: string) {
+// Validate if the field is a string
+function validateStringField(fieldValue: any, fieldName: string) {
     if (typeof fieldValue !== 'string') {
         logWarning(`Invalid argument: ${fieldName} must be a string`);
         throw new HTTPError(`${fieldName} must be a string`, 400);
     }
-    if (!fieldValue || fieldValue?.trim() === '') {
+}
+
+// Validate if the field is a non-empty string
+function validateNonEmptyStringField(fieldValue: any, fieldName: string) {
+    validateStringField(fieldValue, fieldName);
+    
+    if (fieldValue?.trim() === '') {
         logWarning(`Invalid argument: ${fieldName} must be a non-empty string`);
         throw new HTTPError(`${fieldName} must be a non-empty string`, 400);
     }
 }
 
-// Validate if the field is a positive number
-function validatePositiveNumberField(fieldValue: any, fieldName: string) {
+// Validate if the field is a number
+function validateNumberField(fieldValue: any, fieldName: string) {
     if (typeof fieldValue !== 'number') {
         logWarning(`Invalid argument: ${fieldName} must be a number`);
         throw new HTTPError(`${fieldName} must be a number`, 400);
     }
-    if (fieldValue===0)
-        return
-    if (!fieldValue || fieldValue < 0||fieldValue===Infinity) {
+}
+
+// Validate if the field is a positive number
+function validatePositiveNumberField(fieldValue: any, fieldName: string) {
+    validateNumberField(fieldValue, fieldName);
+    
+    if (fieldValue < 0||fieldValue===Infinity) {
         logWarning(`Invalid argument: ${fieldName} must be a positive number`);
         throw new HTTPError(`${fieldName} must be a positive number`, 400);
     }
@@ -260,11 +270,9 @@ function validatePositiveNumberField(fieldValue: any, fieldName: string) {
 
 // Validate if the field is a positive non-zero number
 function validatePositiveNonZeroNumberField(fieldValue: any, fieldName: string) {
-    if (typeof fieldValue !== 'number') {
-        logWarning(`Invalid argument: ${fieldName} must be a number`);
-        throw new HTTPError(`${fieldName} must be a number`, 400);
-    }
-    if (!fieldValue || fieldValue <= 0||fieldValue===Infinity) {
+    validateNumberField(fieldValue, fieldName);
+    
+    if (fieldValue <= 0||fieldValue===Infinity) {
         logWarning(`Invalid argument: ${fieldName} must be a positive non-zero number`);
         throw new HTTPError(`${fieldName} must be a positive non-zero number`, 400);
     }
@@ -278,17 +286,24 @@ function validateBooleanField(fieldValue: any, fieldName: string) {
     }
 }
 
-// Validate if the field is a non-empty array
+// Validate if the field is an array
 function validateArrayField(fieldValue: any, fieldName: string) {
     if (!Array.isArray(fieldValue)) {
         logWarning(`Invalid argument: ${fieldName} must be an array`);
         throw new HTTPError(`${fieldName} must be an array`, 400);
     }
+}
+
+/*
+// Validate if the field is a non-empty array
+function validateNonEmptyArrayField(fieldValue: any, fieldName: string) {
+    validateArrayField(fieldValue, fieldName);
     if (fieldValue.length === 0) {
         logWarning(`Invalid argument: ${fieldName} must be a non-empty array`);
         throw new HTTPError(`${fieldName} must be a non-empty array`, 400);
     }
 }
+ */
 
 // Function to create a new user
 export const create_user = onRequestWithCORS(
@@ -305,7 +320,7 @@ export const create_user = onRequestWithCORS(
             'Last name': last_name,
         }
         for (const mappedFieldKey in mappedFields) {
-            validateEmptyStringField(mappedFields[mappedFieldKey], mappedFieldKey);
+            validateNonEmptyStringField(mappedFields[mappedFieldKey], mappedFieldKey);
         }
 
         // Create a new user object
@@ -349,7 +364,7 @@ export const add_product_to_cart = onRequestWithCORS(
 
         // Validate input data
         const {productId = null, quantity = null} = req.body
-        validateEmptyStringField(productId, 'Product ID');
+        validateNonEmptyStringField(productId, 'Product ID');
         validatePositiveNonZeroNumberField(quantity, 'Quantity');
         logInfo(`Adding product ${productId} with quantity ${quantity} to cart for user ${decodedIdToken.uid}`);
 
@@ -419,7 +434,7 @@ export const remove_product_from_cart = onRequestWithCORS(
 
         // Validate input data
         const {productId = null} = req.body;
-        validateEmptyStringField(productId, 'Product ID');
+        validateNonEmptyStringField(productId, 'Product ID');
 
         // Get the current pending cart
         const cartSnapshot = await getCurrentPendingCartRef(firestore,  decodedIdToken);
@@ -457,7 +472,7 @@ export const update_product_quantity_in_cart = onRequestWithCORS(
 
         // Validate input data
         const {productId = null, quantity = null} = req.body;
-        validateEmptyStringField(productId, 'Product ID');
+        validateNonEmptyStringField(productId, 'Product ID');
         validatePositiveNonZeroNumberField(quantity, 'Quantity');
 
         // Get the current pending cart
@@ -603,14 +618,14 @@ export const create_product = onRequestWithCORS(
             'Stock': stock,
         }
         for (const mappedFieldKey in mappedStringFields) {
-            validateEmptyStringField(mappedStringFields[mappedFieldKey], mappedFieldKey);
+            validateNonEmptyStringField(mappedStringFields[mappedFieldKey], mappedFieldKey);
         }
         for (const mappedFieldKey in mappedPositiveNumberFields) {
             validatePositiveNonZeroNumberField(mappedPositiveNumberFields[mappedFieldKey], mappedFieldKey);
         }
         validateArrayField(tags, 'Tags');
         for (const [i, tag] of tags) {
-            validateEmptyStringField(tag, 'Tag on index ' + i);
+            validateNonEmptyStringField(tag, 'Tag on index ' + i);
         }
         validateBooleanField(active, 'Active');
 
@@ -682,7 +697,7 @@ export const get_product_by_id = onRequestWithCORS(
 
         // Validate input data
         const {productId = null} = req.body;
-        validateEmptyStringField(productId, 'Product ID');
+        validateNonEmptyStringField(productId, 'Product ID');
 
         // Get the product data
         const [, productData] = await getProductDataById(firestore, productId);
@@ -721,7 +736,7 @@ export const update_product = onRequestWithCORS(
             image_url = null,
             sku = null,
         } = req.body;
-        validateEmptyStringField(productId, 'Product ID');
+        validateNonEmptyStringField(productId, 'Product ID');
 
         // Build the updates object
         const updates: Record<string, any> = {};
@@ -738,7 +753,7 @@ export const update_product = onRequestWithCORS(
         }
         for (const mappedFieldKey in mappedStringFields) {
             if (mappedStringFields[mappedFieldKey] !== null) {
-                validateEmptyStringField(mappedStringFields[mappedFieldKey], mappedFieldKey);
+                validateNonEmptyStringField(mappedStringFields[mappedFieldKey], mappedFieldKey);
                 updates[mappedFieldKey.toLowerCase().replace(' ', '_')] = mappedStringFields[mappedFieldKey];
             }
         }
@@ -755,7 +770,7 @@ export const update_product = onRequestWithCORS(
         if (tags !== null) {
             validateArrayField(tags, 'Tags');
             for (const [i, tag] of tags) {
-                validateEmptyStringField(tag, 'Tag on index ' + i);
+                validateNonEmptyStringField(tag, 'Tag on index ' + i);
             }
             updates.tags = tags;
         }
@@ -784,7 +799,7 @@ export const remove_product = onRequestWithCORS(
 
         // Validate input data
         const {productId = null} = req.body;
-        validateEmptyStringField(productId, 'Product ID');
+        validateNonEmptyStringField(productId, 'Product ID');
 
         // Get the product data
         const [productRef, productData] = await getProductDataById(firestore, productId);
