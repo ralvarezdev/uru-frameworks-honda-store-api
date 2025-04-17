@@ -735,3 +735,49 @@ export const remove_product = onRequestWithCORS(
         res.status(200).send({message: 'Product removed successfully'})
     })
 );
+
+// Get my products
+export const get_my_products = onRequestWithCORS(
+    handleRequestError(async (req: Request, res: Response) => {
+        logInfo(`Function get_my_products called`);
+
+        // Check if the user is authenticated
+        const decodedIdToken = await checkAuth(req);
+
+        // Validate input data
+        const {limit = 10, offset = 0} = req.body;
+        const mappedFields: Record<string, any> = {
+            'Limit': limit,
+            'Offset': offset,
+        }
+        for (const mappedFieldKey in mappedFields) {
+            validatePositiveNumberField(mappedFields[mappedFieldKey], mappedFieldKey);
+        }
+
+        // Get the products for the authenticated user
+        const productsRef = firestore.collection('products')
+            .where('owner', '==', decodedIdToken.uid)
+            .limit(limit)
+            .offset(offset);
+        const productSnapshot = await productsRef.get();
+        const products: Record<string, ProductData> = {};
+        productSnapshot.forEach(doc => {
+            products[doc.id] = doc.data() as ProductData;
+        });
+        logInfo(`Retrieved products: ${JSON.stringify(products)}`);
+
+        // Get the total count of active products
+        const totalCountSnapshot = await firestore.collection('products').where(
+            'owner',
+            '==',
+            decodedIdToken.uid
+        ).count().get();
+
+        const totalCount = totalCountSnapshot.data().count;
+
+        res.status(200).send({
+            products: products,
+            totalCount: totalCount,
+        });
+    })
+);
