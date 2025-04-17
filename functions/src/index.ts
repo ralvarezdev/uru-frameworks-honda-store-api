@@ -233,7 +233,11 @@ async function checkProductStock(productData: ProductData, quantity: number) {
 }
 
 // Validate if the field is a non-empty string
-function validateEmptyStringField(fieldValue: string, fieldName: string) {
+function validateEmptyStringField(fieldValue: any, fieldName: string) {
+    if (typeof fieldValue !== 'string') {
+        logWarning(`Invalid argument: ${fieldName} must be a string`);
+        throw new HTTPError(`${fieldName} must be a string`, 400);
+    }
     if (!fieldValue || fieldValue?.trim() === '') {
         logWarning(`Invalid argument: ${fieldName} must be a non-empty string`);
         throw new HTTPError(`${fieldName} must be a non-empty string`, 400);
@@ -241,10 +245,34 @@ function validateEmptyStringField(fieldValue: string, fieldName: string) {
 }
 
 // Validate if the field is a positive number
-function validatePositiveNumberField(fieldValue: number, fieldName: string) {
+function validatePositiveNumberField(fieldValue: any, fieldName: string) {
+    if (typeof fieldValue !== 'number') {
+        logWarning(`Invalid argument: ${fieldName} must be a number`);
+        throw new HTTPError(`${fieldName} must be a number`, 400);
+    }
     if (!fieldValue || fieldValue <= 0) {
         logWarning(`Invalid argument: ${fieldName} must be a positive number`);
         throw new HTTPError(`${fieldName} must be a positive number`, 400);
+    }
+}
+
+// Validate if the field is a boolean
+function validateBooleanField(fieldValue: any, fieldName: string) {
+    if (typeof fieldValue !== 'boolean') {
+        logWarning(`Invalid argument: ${fieldName} must be a boolean`);
+        throw new HTTPError(`${fieldName} must be a boolean`, 400);
+    }
+}
+
+// Validate if the field is a non-empty array
+function validateArrayField(fieldValue: any, fieldName: string) {
+    if (!Array.isArray(fieldValue)) {
+        logWarning(`Invalid argument: ${fieldName} must be an array`);
+        throw new HTTPError(`${fieldName} must be an array`, 400);
+    }
+    if (fieldValue.length === 0) {
+        logWarning(`Invalid argument: ${fieldName} must be a non-empty array`);
+        throw new HTTPError(`${fieldName} must be a non-empty array`, 400);
     }
 }
 
@@ -546,13 +574,15 @@ export const create_product = onRequestWithCORS(
             active = null,
             brand = null,
             tags = null,
-            image_url = null
+            image_url = null,
+            sku = null,
         } = req.body;
         const mappedStringFields: Record<string, any> = {
             'Title': title,
             'Description': description,
             'Brand': brand,
             'Image URL': image_url,
+            'SKU': sku,
         }
         const mappedPositiveNumberFields: Record<string, any> = {
             'Price': price,
@@ -564,6 +594,11 @@ export const create_product = onRequestWithCORS(
         for (const mappedFieldKey in mappedPositiveNumberFields) {
             validatePositiveNumberField(mappedPositiveNumberFields[mappedFieldKey], mappedFieldKey);
         }
+        validateArrayField(tags, 'Tags');
+        for (const [i, tag] of tags) {
+            validateEmptyStringField(tag, 'Tag on index ' + i);
+        }
+        validateBooleanField(active, 'Active');
 
         // Create a new product object
         const newProduct = {
@@ -674,26 +709,46 @@ export const update_product = onRequestWithCORS(
             active = null,
             brand = null,
             tags = null,
-            image_url = null
+            image_url = null,
+            sku = null,
         } = req.body;
         validateEmptyStringField(productId, 'Product ID');
 
         // Build the updates object
         const updates: Record<string, any> = {};
-        const mappedFields: Record<string, any> = {
-            title,
-            description,
-            price,
-            stock,
-            active,
-            brand,
-            tags,
-            image_url,
+        const mappedStringFields: Record<string, any> = {
+            'Title': title,
+            'Description': description,
+            'Brand': brand,
+            'Image URL': image_url,
+            'SKU': sku,
         }
-        for (const fieldKey in mappedFields) {
-            if (mappedFields?.[fieldKey] !== undefined) {
-                updates[fieldKey] = mappedFields[fieldKey];
+        const mappedPositiveNumberFields: Record<string, any> = {
+            'Price': price,
+            'Stock': stock,
+        }
+        for (const mappedFieldKey in mappedStringFields) {
+            if (mappedStringFields[mappedFieldKey] !== null) {
+                validateEmptyStringField(mappedStringFields[mappedFieldKey], mappedFieldKey);
+                updates[mappedFieldKey.toLowerCase().replace(' ', '_')] = mappedStringFields[mappedFieldKey];
             }
+        }
+        for (const mappedFieldKey in mappedPositiveNumberFields) {
+            if (mappedPositiveNumberFields[mappedFieldKey] !== null) {
+                validatePositiveNumberField(mappedPositiveNumberFields[mappedFieldKey], mappedFieldKey);
+                updates[mappedFieldKey.toLowerCase().replace(' ', '_')] = mappedPositiveNumberFields[mappedFieldKey];
+            }
+        }
+        if (active !== null) {
+            validateBooleanField(active, 'Active');
+            updates.active = active;
+        }
+        if (tags !== null) {
+            validateArrayField(tags, 'Tags');
+            for (const [i, tag] of tags) {
+                validateEmptyStringField(tag, 'Tag on index ' + i);
+            }
+            updates.tags = tags;
         }
 
         // Get the product data
