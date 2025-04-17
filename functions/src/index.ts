@@ -243,7 +243,7 @@ function validateStringField(fieldValue: any, fieldName: string) {
 // Validate if the field is a non-empty string
 function validateNonEmptyStringField(fieldValue: any, fieldName: string) {
     validateStringField(fieldValue, fieldName);
-    
+
     if (fieldValue?.trim() === '') {
         logWarning(`Invalid argument: ${fieldName} must be a non-empty string`);
         throw new HTTPError(`${fieldName} must be a non-empty string`, 400);
@@ -261,8 +261,8 @@ function validateNumberField(fieldValue: any, fieldName: string) {
 // Validate if the field is a positive number
 function validatePositiveNumberField(fieldValue: any, fieldName: string) {
     validateNumberField(fieldValue, fieldName);
-    
-    if (fieldValue < 0||fieldValue===Infinity) {
+
+    if (fieldValue < 0 || fieldValue === Infinity) {
         logWarning(`Invalid argument: ${fieldName} must be a positive number`);
         throw new HTTPError(`${fieldName} must be a positive number`, 400);
     }
@@ -271,8 +271,8 @@ function validatePositiveNumberField(fieldValue: any, fieldName: string) {
 // Validate if the field is a positive non-zero number
 function validatePositiveNonZeroNumberField(fieldValue: any, fieldName: string) {
     validateNumberField(fieldValue, fieldName);
-    
-    if (fieldValue <= 0||fieldValue===Infinity) {
+
+    if (fieldValue <= 0 || fieldValue === Infinity) {
         logWarning(`Invalid argument: ${fieldName} must be a positive non-zero number`);
         throw new HTTPError(`${fieldName} must be a positive non-zero number`, 400);
     }
@@ -437,7 +437,7 @@ export const remove_product_from_cart = onRequestWithCORS(
         validateNonEmptyStringField(productId, 'Product ID');
 
         // Get the current pending cart
-        const cartSnapshot = await getCurrentPendingCartRef(firestore,  decodedIdToken);
+        const cartSnapshot = await getCurrentPendingCartRef(firestore, decodedIdToken);
         if (cartSnapshot.empty) {
             logWarning(`No pending cart found for user: ${decodedIdToken.uid}`);
             throw new HTTPError('No pending cart found for this user', 404);
@@ -476,7 +476,7 @@ export const update_product_quantity_in_cart = onRequestWithCORS(
         validatePositiveNonZeroNumberField(quantity, 'Quantity');
 
         // Get the current pending cart
-        const cartSnapshot = await getCurrentPendingCartRef(firestore,  decodedIdToken);
+        const cartSnapshot = await getCurrentPendingCartRef(firestore, decodedIdToken);
         if (cartSnapshot.empty) {
             logWarning(`No pending cart found for user: ${decodedIdToken.uid}`);
             throw new HTTPError('No pending cart found for this user', 404);
@@ -641,6 +641,7 @@ export const create_product = onRequestWithCORS(
             owner: decodedIdToken.uid,
             image_url,
             sku,
+            created_at: new Date(),
         };
 
         // Save the product to Firestore
@@ -648,43 +649,6 @@ export const create_product = onRequestWithCORS(
         logInfo(`Product created successfully with ID: ${productRef.id}`);
 
         res.status(200).send({message: 'Product created successfully'});
-    })
-);
-
-// Function to get products
-export const get_products = onRequestWithCORS(
-    handleRequestError(async (req: Request, res: Response) => {
-        logInfo(`Function get_products called`);
-
-        // Validate input data
-        const {limit = 10, offset = 0} = req.body;
-        validatePositiveNonZeroNumberField(limit, 'Limit');
-        validatePositiveNumberField(offset, 'Offset');
-
-        // Get the products
-        const productsRef = firestore.collection('products')
-            .where('active', '==', true)
-            .limit(limit)
-            .offset(offset);
-        const productSnapshot = await productsRef.get();
-        const products: Record<string, ProductData> = {};
-        productSnapshot.forEach(doc => {
-            products[doc.id] = doc.data() as ProductData;
-        });
-        logInfo(`Retrieved products: ${JSON.stringify(products)}`);
-
-        // Get the total count of active products
-        const totalCountSnapshot = await firestore.collection('products').where(
-            'active',
-            '==',
-            true
-        ).count().get();
-        const totalCount = totalCountSnapshot.data().count;
-
-        res.status(200).send({
-            products: products,
-            totalCount: totalCount,
-        });
     })
 );
 
@@ -830,10 +794,17 @@ export const get_my_products = onRequestWithCORS(
         validatePositiveNumberField(offset, 'Offset');
 
         // Get the products for the authenticated user
-        const productsRef = firestore.collection('products')
+        let productsRef = firestore.collection('products')
             .where('owner', '==', decodedIdToken.uid)
+
+        // Apply pagination
+        const totalCount = await productsRef.count().get();
+        productsRef = productsRef
+            .where('active', '==', true)
             .limit(limit)
             .offset(offset);
+
+        // Get the products
         const productSnapshot = await productsRef.get();
         const products: Record<string, ProductData> = {};
         productSnapshot.forEach(doc => {
@@ -841,18 +812,124 @@ export const get_my_products = onRequestWithCORS(
         });
         logInfo(`Retrieved products: ${JSON.stringify(products)}`);
 
-        // Get the total count of active products
-        const totalCountSnapshot = await firestore.collection('products').where(
-            'owner',
-            '==',
-            decodedIdToken.uid
-        ).count().get();
+        res.status(200).send({
+            products,
+            totalCount,
+        });
+    })
+);
 
-        const totalCount = totalCountSnapshot.data().count;
+// Search products
+export const search_products = onRequestWithCORS(
+    handleRequestError(async (req: Request, res: Response) => {
+        logInfo(`Function search_products called`);
+
+        // Check if the user is authenticated
+        await checkAuth(req);
+
+        // Validate input data
+        const {
+            title = null,
+            min_price = null,
+            max_price = null,
+            min_stock = null,
+            max_stock = null,
+            min_created_at = null,
+            max_created_at = null,
+            limit = 10,
+            offset = 0
+        } = req.body;
+        validateNonEmptyStringField(title, 'Title');
+        validatePositiveNonZeroNumberField(limit, 'Limit');
+        validatePositiveNumberField(offset, 'Offset');
+
+        // Get the products for the authenticated user
+        let productsRef = firestore.collection('products')
+            .where('active', '==', true)
+            .where("title", ">=", title)
+            .where("title", "<=", title + "\uf8ff");
+
+        // Apply filters
+        if (min_price !== null) {
+            validatePositiveNumberField(min_price, 'Minimum Price');
+            productsRef = productsRef.where('price', '>=', min_price);
+        }
+        if (max_price !== null) {
+            validatePositiveNumberField(max_price, 'Maximum Price');
+            productsRef = productsRef.where('price', '<=', max_price);
+        }
+        if (min_stock !== null) {
+            validatePositiveNumberField(min_stock, 'Minimum Stock');
+            productsRef = productsRef.where('stock', '>=', min_stock);
+        }
+        if (max_stock !== null) {
+            validatePositiveNumberField(max_stock, 'Maximum Stock');
+            productsRef = productsRef.where('stock', '<=', max_stock);
+        }
+        if (min_created_at !== null) {
+            validateStringField(min_created_at, 'Minimum Created At');
+            productsRef = productsRef.where('created_at', '>=', new Date(min_created_at));
+        }
+        if (max_created_at !== null) {
+            validateStringField(max_created_at, 'Maximum Created At');
+            productsRef = productsRef.where('created_at', '<=', new Date(max_created_at));
+        }
+
+        // Apply pagination
+        const totalCount = await productsRef.count().get();
+        productsRef = productsRef.limit(limit).offset(offset)
+
+        // Get the products
+        const productsSnapshot = await productsRef.get();
+        const products: Record<string, ProductData> = {};
+        productsSnapshot.forEach(doc => {
+            products[doc.id] = doc.data() as ProductData;
+        });
+        logInfo(`Retrieved products: ${JSON.stringify(products)}`);
 
         res.status(200).send({
-            products: products,
-            totalCount: totalCount,
+            products,
+            totalCount,
+        });
+    })
+);
+
+// Search my products
+export const search_my_products = onRequestWithCORS(
+    handleRequestError(async (req: Request, res: Response) => {
+        logInfo(`Function search_my_products called`);
+
+        // Check if the user is authenticated
+        const decodedIdToken = await checkAuth(req);
+
+        // Validate input data
+        const {title = null, limit = 10, offset = 0} = req.body;
+        validateNonEmptyStringField(title, 'Title');
+        validatePositiveNonZeroNumberField(limit, 'Limit');
+        validatePositiveNumberField(offset, 'Offset');
+
+        // Get the products for the authenticated user
+        let productsRef = firestore.collection('products')
+            .where('owner', '==', decodedIdToken.uid)
+            .where("title", ">=", title)
+            .where("title", "<=", title + "\uf8ff");
+
+        // Apply pagination
+        const totalCount = await productsRef.count().get();
+        let productRef = productsRef.limit(limit).offset(offset)
+
+        // Get the products
+        const productSnapshot = await productRef.get();
+        const products: Record<string, ProductData> = {};
+        productSnapshot.forEach(doc => {
+            products[doc.id] = doc.data() as ProductData;
+        });
+
+        logInfo(`Retrieved products: ${JSON.stringify(products)}`);
+
+        res.status(200).send({
+            products,
+            totalCount,
         });
     })
 );
