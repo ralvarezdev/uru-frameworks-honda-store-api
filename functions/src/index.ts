@@ -932,3 +932,39 @@ export const search_my_products = onRequestWithCORS(
         });
     })
 );
+
+// Get the latest products
+export const get_latest_products = onRequestWithCORS(
+    handleRequestError(async (req: Request, res: Response) => {
+        logInfo(`Function get_latest_products called`);
+
+        // Validate input data
+        const {limit = 10, offset = 0} = req.body;
+        validatePositiveNonZeroNumberField(limit, 'Limit');
+        validatePositiveNumberField(offset, 'Offset');
+
+        // Get the latest products
+        let productsRef = firestore.collection('products')
+            .where('active', '==', true)
+            .orderBy('created_at', 'desc');
+
+        // Apply pagination
+        const totalCountSnapshot = await productsRef.count().get()
+        const totalCount = totalCountSnapshot.data().count;
+        productsRef = productsRef.limit(limit).offset(offset)
+
+        // Get the products
+        const productSnapshot = await productsRef.get();
+        const products: Record<string, ProductData> = {};
+        productSnapshot.forEach(doc => {
+            products[doc.id] = doc.data() as ProductData;
+        });
+
+        logInfo(`Retrieved products: ${JSON.stringify(products)}`);
+
+        res.status(200).send({
+            products,
+            total_count: totalCount,
+        });
+    })
+);
