@@ -798,7 +798,6 @@ export const get_my_products = onRequestWithCORS(
         const totalCountSnapshot = await productsRef.count().get()
         const totalCount = totalCountSnapshot.data().count;
         productsRef = productsRef
-            .where('active', '==', true)
             .limit(limit)
             .offset(offset);
 
