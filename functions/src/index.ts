@@ -82,7 +82,7 @@ type ProductData = {
     active: boolean,
     brand: string,
     tags: string[],
-    owner: string,
+    owner: string | UserData,
     image_url: string,
 }
 
@@ -207,8 +207,19 @@ async function getProductDataById(firestore: Firestore, productId: string): Prom
         logWarning(`Product not found with ID: ${productId}`);
         throw new HTTPError('Product not found', 404);
     }
+    const productData = productSnapshot.data() as ProductData;
 
-    return [productRef, productSnapshot.data() as ProductData];
+    // Fetch the owner's name from the users collection
+    const userRef = firestore.collection('users').doc(productData.owner as string);
+    const userSnapshot = await userRef.get();
+
+    if (!userSnapshot.exists) {
+        logWarning(`User not found with ID: ${productData.owner}`);
+        throw new HTTPError('Owner not found', 404);
+    }
+    const userData = userSnapshot.data() as UserData;
+
+    return [productRef, {...productData, owner: {...userData, uid: productData.owner} as UserData}];
 }
 
 // Check if the product is active
@@ -378,6 +389,13 @@ export const add_product_to_cart = onRequestWithCORS(
 
         // Check if the product has stock
         await checkProductStock(productData, quantity);
+
+        // Check if the current user is the owner of the product
+        const ownerData = productData.owner as UserData;
+        if (ownerData.uid === decodedIdToken.uid) {
+            logWarning(`User ${decodedIdToken.uid} cannot add their own product to the cart`);
+            throw new HTTPError('You cannot add your own product to the cart', 400);
+        }
 
         if (cartSnapshot.empty) {
             // Create a new cart
@@ -666,7 +684,8 @@ export const get_product_by_id = onRequestWithCORS(
         logInfo(`Retrieved product data: ${JSON.stringify(productData)}`);
 
         // Check if the product is active if the user is not the owner
-        if (productData.owner !== decodedIdToken.uid) {
+        const ownerData = productData.owner as UserData;
+        if (ownerData.uid !== decodedIdToken.uid) {
             logWarning(`User ${decodedIdToken.uid} is not the owner of product ${product_id}`);
             await checkProductActive(productData);
         } else {
@@ -739,7 +758,8 @@ export const update_product = onRequestWithCORS(
 
         // Get the product data
         const [productRef, productData] = await getProductDataById(firestore, product_id);
-        if (productData.owner !== decodedIdToken.uid) {
+        const ownerData = productData.owner as UserData;
+        if (ownerData.uid !== decodedIdToken.uid) {
             logWarning(`User ${decodedIdToken.uid} is not the owner of product ${product_id}`);
             throw new HTTPError('You are not the owner of this product', 403);
         }
@@ -765,7 +785,8 @@ export const remove_product = onRequestWithCORS(
 
         // Get the product data
         const [productRef, productData] = await getProductDataById(firestore, product_id);
-        if (productData.owner !== decodedIdToken.uid) {
+        const ownerData = productData.owner as UserData;
+        if (ownerData.uid !== decodedIdToken.uid) {
             logWarning(`User ${decodedIdToken.uid} is not the owner of product ${product_id}`);
             throw new HTTPError('You are not the owner of this product', 403);
         }
@@ -820,9 +841,6 @@ export const get_my_products = onRequestWithCORS(
 export const search_products = onRequestWithCORS(
     handleRequestError(async (req: Request, res: Response) => {
         logInfo(`Function search_products called`);
-
-        // Check if the user is authenticated
-        await checkAuth(req);
 
         // Validate input data
         const {
