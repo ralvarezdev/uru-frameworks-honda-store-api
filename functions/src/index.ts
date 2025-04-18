@@ -91,8 +91,7 @@ type CartData = {
     owner: string,
     status: string,
     products: {
-        [key: string]: {
-            id: string,
+        [product_id: string]: {
             price: number,
             quantity: number,
         }
@@ -363,16 +362,16 @@ export const add_product_to_cart = onRequestWithCORS(
         const decodedIdToken = await checkAuth(req);
 
         // Validate input data
-        const {productId = null, quantity = null} = req.body
-        validateNonEmptyStringField(productId, 'Product ID');
+        const {product_id = null, quantity = null} = req.body
+        validateNonEmptyStringField(product_id, 'Product ID');
         validatePositiveNonZeroNumberField(quantity, 'Quantity');
-        logInfo(`Adding product ${productId} with quantity ${quantity} to cart for user ${decodedIdToken.uid}`);
+        logInfo(`Adding product ${product_id} with quantity ${quantity} to cart for user ${decodedIdToken.uid}`);
 
         // Get the current pending cart
         const cartSnapshot = await getCurrentPendingCartRef(firestore, decodedIdToken);
 
         // Get the product data
-        const [, productData] = await getProductDataById(firestore, productId);
+        const [,productData] = await getProductDataById(firestore, product_id);
 
         // Check if the product is active
         await checkProductActive(productData);
@@ -386,8 +385,7 @@ export const add_product_to_cart = onRequestWithCORS(
                 owner: decodedIdToken.uid,
                 status: 'pending',
                 products: {
-                    [productId]: {
-                        id: productId,
+                    [product_id]: {
                         price: productData.price,
                         quantity: quantity,
                     },
@@ -398,18 +396,17 @@ export const add_product_to_cart = onRequestWithCORS(
         } else {
             const cartDocument = cartSnapshot.docs[0];
             const cartData = cartDocument.data() as CartData;
-            const existingProduct = cartData.products && cartData.products[productId];
+            const existingProduct = cartData.products && cartData.products[product_id];
 
             const updatedProducts = {...cartData.products};
 
             // Check if the product already exists in the cart
             if (existingProduct) {
                 // Update the quantity of the existing product
-                updatedProducts[productId].quantity += quantity;
-                logInfo(`Incrementing quantity of product "${productData.title}" in cart to ${updatedProducts[productId].quantity}`);
+                updatedProducts[product_id].quantity += quantity;
+                logInfo(`Incrementing quantity of product "${productData.title}" in cart to ${updatedProducts[product_id].quantity}`);
             } else {
-                updatedProducts[productId] = {
-                    id: productId,
+                updatedProducts[product_id] = {
                     price: productData.price,
                     quantity: quantity,
                 };
@@ -433,8 +430,8 @@ export const remove_product_from_cart = onRequestWithCORS(
         const decodedIdToken = await checkAuth(req);
 
         // Validate input data
-        const {productId = null} = req.body;
-        validateNonEmptyStringField(productId, 'Product ID');
+        const {product_id = null} = req.body;
+        validateNonEmptyStringField(product_id, 'Product ID');
 
         // Get the current pending cart
         const cartSnapshot = await getCurrentPendingCartRef(firestore, decodedIdToken);
@@ -446,17 +443,17 @@ export const remove_product_from_cart = onRequestWithCORS(
         // Get the cart document
         const cartDocument = cartSnapshot.docs[0];
         const cartData = cartDocument.data() as CartData;
-        if (!cartData?.products[productId]) {
-            logWarning(`Product ${productId} not found in the cart`);
+        if (!cartData?.products[product_id]) {
+            logWarning(`Product ${product_id} not found in the cart`);
             throw new HTTPError('Product not found in the cart', 404);
         }
 
         // Remove the product from the cart
         const updatedProducts = {...cartData.products};
-        delete updatedProducts[productId];
+        delete updatedProducts[product_id];
 
         await cartDocument.ref.update({products: updatedProducts});
-        logInfo(`Product ${productId} removed from cart successfully`);
+        logInfo(`Product ${product_id} removed from cart successfully`);
 
         res.status(200).send({message: 'Product removed from cart successfully'});
     })
@@ -471,8 +468,8 @@ export const update_product_quantity_in_cart = onRequestWithCORS(
         const decodedIdToken = await checkAuth(req);
 
         // Validate input data
-        const {productId = null, quantity = null} = req.body;
-        validateNonEmptyStringField(productId, 'Product ID');
+        const {product_id = null, quantity = null} = req.body;
+        validateNonEmptyStringField(product_id, 'Product ID');
         validatePositiveNonZeroNumberField(quantity, 'Quantity');
 
         // Get the current pending cart
@@ -485,13 +482,13 @@ export const update_product_quantity_in_cart = onRequestWithCORS(
         // Get the cart document
         const cartDocument = cartSnapshot.docs[0];
         const cartData = cartDocument.data() as CartData;
-        if (!cartData?.products[productId]) {
-            logWarning(`Product ${productId} not found in the cart`)
+        if (!cartData?.products[product_id]) {
+            logWarning(`Product ${product_id} not found in the cart`)
             throw new HTTPError('Product not found in the cart', 404);
         }
 
         // Get the product data
-        const [, productData] = await getProductDataById(firestore, productId);
+        const [, productData] = await getProductDataById(firestore, product_id);
 
         // Check if the product is active
         await checkProductActive(productData);
@@ -500,10 +497,10 @@ export const update_product_quantity_in_cart = onRequestWithCORS(
         await checkProductStock(productData, quantity);
 
         const updatedProducts = {...cartData.products};
-        updatedProducts[productId].quantity = quantity;
+        updatedProducts[product_id].quantity = quantity;
 
         await cartDocument.ref.update({products: updatedProducts});
-        logInfo(`Product ${productId} quantity updated to ${quantity} in cart`)
+        logInfo(`Product ${product_id} quantity updated to ${quantity} in cart`)
 
         res.status(200).send({message: 'Product quantity updated successfully in cart'});
     })
@@ -661,19 +658,19 @@ export const get_product_by_id = onRequestWithCORS(
         const decodedIdToken = await checkAuth(req);
 
         // Validate input data
-        const {productId = null} = req.body;
-        validateNonEmptyStringField(productId, 'Product ID');
+        const {product_id = null} = req.body;
+        validateNonEmptyStringField(product_id, 'Product ID');
 
         // Get the product data
-        const [, productData] = await getProductDataById(firestore, productId);
+        const [, productData] = await getProductDataById(firestore, product_id);
         logInfo(`Retrieved product data: ${JSON.stringify(productData)}`);
 
         // Check if the product is active if the user is not the owner
         if (productData.owner !== decodedIdToken.uid) {
-            logWarning(`User ${decodedIdToken.uid} is not the owner of product ${productId}`);
+            logWarning(`User ${decodedIdToken.uid} is not the owner of product ${product_id}`);
             await checkProductActive(productData);
         } else {
-            logInfo(`User ${decodedIdToken.uid} is the owner of product ${productId}`);
+            logInfo(`User ${decodedIdToken.uid} is the owner of product ${product_id}`);
         }
 
         res.status(200).send({product: productData})
@@ -690,7 +687,7 @@ export const update_product = onRequestWithCORS(
 
         // Validate input data
         const {
-            productId = null,
+            product_id = null,
             title = null,
             description = null,
             price = null,
@@ -701,7 +698,7 @@ export const update_product = onRequestWithCORS(
             image_url = null,
             sku = null,
         } = req.body;
-        validateNonEmptyStringField(productId, 'Product ID');
+        validateNonEmptyStringField(product_id, 'Product ID');
 
         // Build the updates object
         const updates: Record<string, any> = {};
@@ -741,14 +738,14 @@ export const update_product = onRequestWithCORS(
         }
 
         // Get the product data
-        const [productRef, productData] = await getProductDataById(firestore, productId);
+        const [productRef, productData] = await getProductDataById(firestore, product_id);
         if (productData.owner !== decodedIdToken.uid) {
-            logWarning(`User ${decodedIdToken.uid} is not the owner of product ${productId}`);
+            logWarning(`User ${decodedIdToken.uid} is not the owner of product ${product_id}`);
             throw new HTTPError('You are not the owner of this product', 403);
         }
 
         await productRef.update({...updates});
-        logInfo(`Product ${productId} updated successfully`);
+        logInfo(`Product ${product_id} updated successfully`);
 
         res.status(200).send({message: 'Product updated successfully'})
     })
@@ -763,18 +760,18 @@ export const remove_product = onRequestWithCORS(
         const decodedIdToken = await checkAuth(req);
 
         // Validate input data
-        const {productId = null} = req.body;
-        validateNonEmptyStringField(productId, 'Product ID');
+        const {product_id = null} = req.body;
+        validateNonEmptyStringField(product_id, 'Product ID');
 
         // Get the product data
-        const [productRef, productData] = await getProductDataById(firestore, productId);
+        const [productRef, productData] = await getProductDataById(firestore, product_id);
         if (productData.owner !== decodedIdToken.uid) {
-            logWarning(`User ${decodedIdToken.uid} is not the owner of product ${productId}`);
+            logWarning(`User ${decodedIdToken.uid} is not the owner of product ${product_id}`);
             throw new HTTPError('You are not the owner of this product', 403);
         }
 
         await productRef.delete();
-        logInfo(`Product ${productId} removed successfully`);
+        logInfo(`Product ${product_id} removed successfully`);
 
         res.status(200).send({message: 'Product removed successfully'})
     })
@@ -798,7 +795,8 @@ export const get_my_products = onRequestWithCORS(
             .where('owner', '==', decodedIdToken.uid)
 
         // Apply pagination
-        const totalCount = await productsRef.count().get();
+        const totalCountSnapshot = await productsRef.count().get()
+        const totalCount = totalCountSnapshot.data().count;
         productsRef = productsRef
             .where('active', '==', true)
             .limit(limit)
@@ -814,7 +812,7 @@ export const get_my_products = onRequestWithCORS(
 
         res.status(200).send({
             products,
-            totalCount,
+            total_count: totalCount,
         });
     })
 );
@@ -876,7 +874,8 @@ export const search_products = onRequestWithCORS(
         }
 
         // Apply pagination
-        const totalCount = await productsRef.count().get();
+        const totalCountSnapshot = await productsRef.count().get()
+        const totalCount = totalCountSnapshot.data().count;
         productsRef = productsRef.limit(limit).offset(offset)
 
         // Get the products
@@ -889,7 +888,7 @@ export const search_products = onRequestWithCORS(
 
         res.status(200).send({
             products,
-            totalCount,
+            total_count: totalCount,
         });
     })
 );
@@ -915,7 +914,8 @@ export const search_my_products = onRequestWithCORS(
             .where("title", "<=", title + "\uf8ff");
 
         // Apply pagination
-        const totalCount = await productsRef.count().get();
+        const totalCountSnapshot = await productsRef.count().get()
+        const totalCount = totalCountSnapshot.data().count;
         let productRef = productsRef.limit(limit).offset(offset)
 
         // Get the products
@@ -929,7 +929,7 @@ export const search_my_products = onRequestWithCORS(
 
         res.status(200).send({
             products,
-            totalCount,
+            total_count: totalCount,
         });
     })
 );
